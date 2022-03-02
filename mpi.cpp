@@ -74,11 +74,6 @@ bin_t row_to_particle_vec(int row_id){
         bin_t cur_bin = bins[i + start_bin];
         copy(cur_bin.begin(), cur_bin.end(), back_inserter(arr));
     }
-    for(auto iter: arr){
-        cout << iter->x << ' ';
-    }
-    cout << endl;
-
     return arr;
 }
 
@@ -120,49 +115,71 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
 
     // reconstruct bin
     reconstruct_bin(parts, num_parts);
+    
 }
 
 void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, int num_procs) {
     // Write this function
-    if(rank >= 0 && rank <= 2){
+    if(rank >= 0 && rank <= 4){
         ////////////////////// SEND
-        bin_t arr = row_to_particle_vec(proc_rows_start);
-        // for(auto iter: arr){
-        //     cout << "rank: " << rank << ' ' << iter->x << ' ';
-        // }
-        // cout << endl;
-        if(proc_rows_start != 0){ // up has proc
+
+        // up has proc
+        if(proc_rows_start != 0){ 
             // send my first row
             MPI_Request req;
-            MPI_Isend(&arr[0], arr.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &req);
+            bin_t first;
+            first = row_to_particle_vec(proc_rows_start);
+            MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &req);
         }
-        // if(proc_rows_end != bin_row_count){
-
-        // }
+        // down has proc
+        if(proc_rows_end != bin_row_count){ 
+            // send my last row
+            MPI_Request req2;
+            bin_t last = row_to_particle_vec(proc_rows_end);
+            for(auto iter: last){
+                cout << "rank: " << rank << " (" << iter->x << ',' << iter->y << ") ";
+            }
+            cout << endl;
+            MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &req2);
+        }
         
         ////////////////////// RECV
-        bin_t lower_row(num_parts);
-        if(proc_rows_start != 0){
-            
-        }
+        bin_t upper_row(num_parts), lower_row(num_parts);
+
         // recv first row from proc under me
-        if(proc_rows_end != bin_row_count){
-            // int recvd_tag, recvd_from, recvd_count;
-            // MPI_Status status;
-            // MPI_Request req;
-            // MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status);
-            // recvd_tag = status.MPI_TAG;
-            // recvd_from = status.MPI_SOURCE;
-            // MPI_Get_count( &status, PARTICLE, &recvd_count);
-            // // for(auto iter: lower_row){
-            // //     cout << "rank: " << rank << ' ' << iter->x << ' ';
-            // // }
-            // cout << "rank: " << rank << " cnt: " << recvd_count << endl;
-            // for(int i=0;i<recvd_count;i++){
-            //     cout << "recvd from: " << recvd_from << ' ' << lower_row[i]->x << ' ';
-            // }
-            // cout << endl;
+        if(proc_rows_end != bin_row_count && rank != 4){
+            int recvd_tag, recvd_from, recvd_count;
+            MPI_Status status;
+
+            MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status);
+            recvd_tag = status.MPI_TAG;
+            recvd_from = status.MPI_SOURCE;
+            MPI_Get_count( &status, PARTICLE, &recvd_count);
+
+            cout << "rank: " << rank << " cnt: " << recvd_count << endl;
+            for(int i=0;i<recvd_count;i++){
+                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << lower_row[i]->x << ',' << lower_row[i]->y << ") ";
+            }
+            cout << endl << endl;
         }
+
+        // recv last row from proc on top of me
+        if(proc_rows_start != 0){
+            int recvd_tag, recvd_from, recvd_count;
+            MPI_Status status;
+
+            MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status);
+            recvd_tag = status.MPI_TAG;
+            recvd_from = status.MPI_SOURCE;
+            MPI_Get_count( &status, PARTICLE, &recvd_count);
+
+            cout << "rank: " << rank << " cnt: " << recvd_count << endl;
+            for(int i=0;i<recvd_count;i++){
+                cout << "upper rank: " << rank << " recvd from: " << recvd_from << " (" << upper_row[i]->x << ',' << upper_row[i]->y << ") ";
+            }
+            cout << endl;
+        }
+
     }
     
 }
