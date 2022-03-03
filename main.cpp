@@ -156,9 +156,10 @@ int main(int argc, char** argv) {
 
     for (int step = 0; step < nsteps; ++step) {
         simulate_one_step(parts, num_parts, size, rank, num_procs);
-        // std::cout << rank << " finished" << std::endl;
+        std::cout << rank <<" Finished step: " << step << std::endl;
         // Save state if necessary
         if (fsave.good() && (step % savefreq) == 0) {
+            // std::cout << "Here step: " << step << std::endl;
             gather_for_save(parts, num_parts, size, rank, num_procs);
             if (rank == 0) {
                 save(fsave, parts, num_parts, size);
