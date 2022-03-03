@@ -127,7 +127,7 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
 
 void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, int num_procs) {
     // Write this function
-    if(rank >= 0 && rank <= 10){
+    if(rank >= 0 && rank <= 12){
         ////////////////////// SEND
         MPI_Request request[2];
         MPI_Status status[2];
@@ -142,7 +142,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
             }
             cout << endl;
             MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &request[0]);
-            MPI_Wait(&request[0], &status[0]);
+            // MPI_Wait(&request[0], &status[0]);
         }
         
         // down has proc
@@ -156,7 +156,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
             }
             cout << endl;
             MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &request[1]);
-            MPI_Wait(&request[1], &status[1]);
+            // MPI_Wait(&request[1], &status[1]);
         }
                 
         ////////////////////// RECV
@@ -167,6 +167,8 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
             int recvd_tag, recvd_from, recvd_count;
 
             MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status[1]);
+            MPI_Wait(&request[0], &status[1]);
+
             recvd_tag = status[1].MPI_TAG;
             recvd_from = status[1].MPI_SOURCE;
             MPI_Get_count( &status[1], PARTICLE, &recvd_count);
@@ -182,8 +184,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         if(proc_rows_end != bin_row_count){
             int recvd_tag, recvd_from, recvd_count;
             MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status[0]);
-            bin_t temp;
-            copy(lower_row.begin(), lower_row.end(), back_inserter(temp));
+            MPI_Wait(&request[1], &status[0]);
 
             recvd_tag = status[0].MPI_TAG;
             recvd_from = status[0].MPI_SOURCE;
@@ -191,7 +192,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
 
             cout << "lower rank: " << rank << " cnt: " << recvd_count << endl;
             for(int i=0;i<recvd_count;i++){
-                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << temp[i]->x << ',' << temp[i]->y << ") ";
+                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << lower_row[i]->x << ',' << lower_row[i]->y << ") ";
             }
             cout << endl << endl;
         }
