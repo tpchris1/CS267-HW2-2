@@ -5,7 +5,7 @@
 #include <mpi.h>
 
 // Program Constants
-#define nsteps   1
+#define nsteps   5
 #define savefreq 10
 #define density  0.0005
 #define mass     0.01
