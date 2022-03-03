@@ -8,6 +8,7 @@ using namespace std;
 
 // Put any static global variables here that you will use throughout the simulation.
 typedef vector<particle_t*> bin_t;
+typedef vector<particle_t> row_t;
 
 // total 
 double size;
@@ -23,6 +24,8 @@ int proc_bin_count;
 // e.g if proc 0 has row 0 and row 1 then (proc_rows_start, proc_rows_end) = (0,2)
 int proc_rows_start; // left close
 int proc_rows_end; //  right open 
+
+row_t upper_row, lower_row;
 
 int inline get_row_id_particle(particle_t& particle){
     int y;
@@ -68,13 +71,15 @@ void reconstruct_bin(particle_t* parts, int num_parts) {
     }
 }
 
-bin_t row_to_particle_vec(int row_id){
-    bin_t arr;
+row_t row_to_particle_vec(int row_id){
+    row_t arr;
     int start_bin = get_bin_id_by_row(row_id);
     // cout << "sbin: " << start_bin << endl;
     for(int i=0; i<bin_row_count; i++){
         bin_t cur_bin = bins[i + start_bin];
-        copy(cur_bin.begin(), cur_bin.end(), back_inserter(arr));
+        for(auto iter: cur_bin){
+            arr.push_back(*iter);
+        }
     }
     return arr;
 }
@@ -114,16 +119,20 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
         proc_rows_start = rows_before_me + (rank-remainder) * rows_per_proc;
         proc_rows_end = proc_rows_start + rows_per_proc;
     }   
-    
+
     cout << "rank: " << rank << endl 
          << "rows_per_proc: " << rows_per_proc << endl
          << "proc_rows_start: " << proc_rows_start << endl
          << "proc_rows_end: " << proc_rows_end << endl;
+
+    upper_row.resize(num_parts);
+    lower_row.resize(num_parts);
     
     // reconstruct bin
     reconstruct_bin(parts, num_parts);
     
 }
+
 
 void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, int num_procs) {
     // Write this function
@@ -135,67 +144,79 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         // up has proc
         if(proc_rows_start != 0){ 
             // send my first row
-            bin_t first;
-            first = row_to_particle_vec(proc_rows_start);
+            row_t first = row_to_particle_vec(proc_rows_start);
+            cout << "first rank: " << rank << " cnt: " << first.size() << endl;            
             for(auto iter: first){
-                cout << "rank: " << rank << " (" << iter->x << ',' << iter->y << ") ";
+                cout << "rank: " << rank << " (" << iter.x << ',' << iter.y << ") ";
             }
             cout << endl;
             MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &request[0]);
-            // MPI_Wait(&request[0], &status[0]);
         }
         
         // down has proc
         if(proc_rows_end != bin_row_count){ 
             // send my last row
-            bin_t last = row_to_particle_vec(proc_rows_end - 1);
-            cout << "send last rank: " << rank << endl;
+            row_t last = row_to_particle_vec(proc_rows_end - 1);
+            cout << "last rank: " << rank << " cnt: " << last.size() << endl;            
             
             for(auto iter: last){
-                cout << "rank: " << rank << " (" << iter->x << ',' << iter->y << ") ";
+                cout << "rank: " << rank << " (" << iter.x << ',' << iter.y << ") ";
             }
             cout << endl;
-            MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &request[1]);
-            // MPI_Wait(&request[1], &status[1]);
+            MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 0, MPI_COMM_WORLD, &request[1]);
         }
                 
         ////////////////////// RECV
-        bin_t upper_row(num_parts), lower_row(num_parts);
-
+        int upper_count, lower_count;
         // recv last row from proc on top of me
         if(proc_rows_start != 0){
-            int recvd_tag, recvd_from, recvd_count;
+            int recvd_tag, recvd_from;
 
-            MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status[1]);
-            MPI_Wait(&request[0], &status[1]);
+            MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 0, MPI_COMM_WORLD, &status[1]);
 
             recvd_tag = status[1].MPI_TAG;
             recvd_from = status[1].MPI_SOURCE;
-            MPI_Get_count( &status[1], PARTICLE, &recvd_count);
+            MPI_Get_count( &status[1], PARTICLE, &upper_count);
 
-            cout << "upper rank: " << rank << " cnt: " << recvd_count << endl;
-            for(int i=0;i<recvd_count;i++){
-                cout << "upper rank: " << rank << " recvd from: " << recvd_from << " (" << upper_row[i]->x << ',' << upper_row[i]->y << ") ";
+            cout << "upper rank: " << rank << " cnt: " << upper_count << endl;
+            for(int i=0;i<upper_count;i++){
+                cout << "upper rank: " << rank << " recvd from: " << recvd_from << " (" << upper_row[i].x << ',' << upper_row[i].y << ") ";
             }
             cout << endl << endl;
         }
 
         // recv first row from proc under me
         if(proc_rows_end != bin_row_count){
-            int recvd_tag, recvd_from, recvd_count;
+            int recvd_tag, recvd_from;
             MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status[0]);
-            MPI_Wait(&request[1], &status[0]);
 
             recvd_tag = status[0].MPI_TAG;
             recvd_from = status[0].MPI_SOURCE;
-            MPI_Get_count( &status[0], PARTICLE, &recvd_count);
+            MPI_Get_count( &status[0], PARTICLE, &lower_count);
 
-            cout << "lower rank: " << rank << " cnt: " << recvd_count << endl;
-            for(int i=0;i<recvd_count;i++){
-                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << lower_row[i]->x << ',' << lower_row[i]->y << ") ";
+            cout << "lower rank: " << rank << " cnt: " << lower_count << endl;
+            for(int i=0;i<lower_count;i++){
+                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << lower_row[i].x << ',' << lower_row[i].y << ") ";
             }
             cout << endl << endl;
         }
+
+        // put upper row and lower row into bins
+        for(int i=0;i<upper_count;i++){
+            particle_t &p = upper_row[i];
+            int bin_id = get_bin_id(p);
+            bins[bin_id].push_back(&p);
+        }
+        for(int i=0;i<lower_count;i++){
+            particle_t &p = lower_row[i];
+            int bin_id = get_bin_id(p);
+            bins[bin_id].push_back(&p);
+        }
+
+        // // calculate the row of particles
+        // for(int i=proc_rows_start; i<proc_rows_end;i++){
+
+        // }
     }
     
 }
