@@ -19,8 +19,10 @@ double bin_size;
 // for each process
 int rows_per_proc;
 int proc_bin_count;
-int proc_rows_start;
-int proc_rows_end; 
+
+// e.g if proc 0 has row 0 and row 1 then (proc_rows_start, proc_rows_end) = (0,2)
+int proc_rows_start; // left close
+int proc_rows_end; //  right open 
 
 int inline get_row_id_particle(particle_t& particle){
     int y;
@@ -112,7 +114,12 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
         proc_rows_start = rows_before_me + (rank-remainder) * rows_per_proc;
         proc_rows_end = proc_rows_start + rows_per_proc;
     }   
-
+    
+    cout << "rank: " << rank << endl 
+         << "rows_per_proc: " << rows_per_proc << endl
+         << "proc_rows_start: " << proc_rows_start << endl
+         << "proc_rows_end: " << proc_rows_end << endl;
+    
     // reconstruct bin
     reconstruct_bin(parts, num_parts);
     
@@ -120,66 +127,76 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
 
 void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, int num_procs) {
     // Write this function
-    if(rank >= 0 && rank <= 4){
+    if(rank >= 0 && rank <= 10){
         ////////////////////// SEND
+
+        MPI_Request request[2];
+        MPI_Status status[2];
 
         // up has proc
         if(proc_rows_start != 0){ 
             // send my first row
-            MPI_Request req;
             bin_t first;
             first = row_to_particle_vec(proc_rows_start);
-            MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &req);
-        }
-        // down has proc
-        if(proc_rows_end != bin_row_count){ 
-            // send my last row
-            MPI_Request req2;
-            bin_t last = row_to_particle_vec(proc_rows_end);
-            for(auto iter: last){
+            for(auto iter: first){
                 cout << "rank: " << rank << " (" << iter->x << ',' << iter->y << ") ";
             }
             cout << endl;
-            MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &req2);
+            MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &request[0]);
+            MPI_Wait(&request[0], &status[0]);
         }
+        
+        // // down has proc
+        // if(proc_rows_end != bin_row_count){ 
+        //     // send my last row
+        //     bin_t last = row_to_particle_vec(proc_rows_end - 1);
+        //     cout << "send last rank: " << rank << endl;
+            
+        //     for(auto iter: last){
+        //         cout << "rank: " << rank << " (" << iter->x << ',' << iter->y << ") ";
+        //     }
+        //     cout << endl;
+        //     MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &request[1]);
+        // }
+        
+        // MPI_Waitall(1, request, status);
         
         ////////////////////// RECV
         bin_t upper_row(num_parts), lower_row(num_parts);
 
+        // // recv last row from proc on top of me
+        // if(proc_rows_start != 0){
+        //     int recvd_tag, recvd_from, recvd_count;
+
+        //     MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status[1]);
+        //     recvd_tag = status2.MPI_TAG;
+        //     recvd_from = status2.MPI_SOURCE;
+        //     MPI_Get_count( &status2, PARTICLE, &recvd_count);
+
+        //     cout << "upper rank: " << rank << " cnt: " << recvd_count << endl;
+        //     for(int i=0;i<recvd_count;i++){
+        //         cout << "upper rank: " << rank << " recvd from: " << recvd_from << " (" << upper_row[i]->x << ',' << upper_row[i]->y << ") ";
+        //     }
+        //     cout << endl << endl;
+        // }
+
         // recv first row from proc under me
-        if(proc_rows_end != bin_row_count && rank != 4){
+        if(proc_rows_end != bin_row_count){
             int recvd_tag, recvd_from, recvd_count;
-            MPI_Status status;
+            MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status[0]);
+            bin_t temp;
+            copy(lower_row.begin(), lower_row.end(), back_inserter(temp));
 
-            MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status);
-            recvd_tag = status.MPI_TAG;
-            recvd_from = status.MPI_SOURCE;
-            MPI_Get_count( &status, PARTICLE, &recvd_count);
+            recvd_tag = status[0].MPI_TAG;
+            recvd_from = status[0].MPI_SOURCE;
+            MPI_Get_count( &status[0], PARTICLE, &recvd_count);
 
-            cout << "rank: " << rank << " cnt: " << recvd_count << endl;
+            cout << "lower rank: " << rank << " cnt: " << recvd_count << endl;
             for(int i=0;i<recvd_count;i++){
-                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << lower_row[i]->x << ',' << lower_row[i]->y << ") ";
+                cout << "lower rank: " << rank << " recvd from: " << recvd_from << " (" << temp[i]->x << ',' << temp[i]->y << ") ";
             }
             cout << endl << endl;
         }
-
-        // recv last row from proc on top of me
-        if(proc_rows_start != 0){
-            int recvd_tag, recvd_from, recvd_count;
-            MPI_Status status;
-
-            MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status);
-            recvd_tag = status.MPI_TAG;
-            recvd_from = status.MPI_SOURCE;
-            MPI_Get_count( &status, PARTICLE, &recvd_count);
-
-            cout << "rank: " << rank << " cnt: " << recvd_count << endl;
-            for(int i=0;i<recvd_count;i++){
-                cout << "upper rank: " << rank << " recvd from: " << recvd_from << " (" << upper_row[i]->x << ',' << upper_row[i]->y << ") ";
-            }
-            cout << endl;
-        }
-
     }
     
 }
