@@ -88,8 +88,10 @@ void reconstruct_row_to_bin(row_t row, int row_count, particle_t* parts){
     for(int i=0; i<row_count; i++){
         particle_t &newp = row[i];
         int cur_bin_id = get_bin_id(newp);
-        assignPart(parts, newp);
-        bins[cur_bin_id].push_back(&parts[newp.id - 1]);
+        if(get_row_id_particle(newp) >= proc_rows_start && get_row_id_particle(newp) < proc_rows_end){
+            assignPart(parts, newp);
+            bins[cur_bin_id].push_back(&parts[newp.id - 1]);
+        }
     }
     return;
 }
@@ -507,7 +509,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     }
 
     if(rank == 0){
-        // cout << "after recon bin: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
+        cout << "after recon bin: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
     }
 
     // cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
@@ -622,8 +624,8 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
         for(int j=0; j<bin_row_count; j++){ // for each bin in current row
             int cur_bin_id = j + start_bin;
             bin_t cur_bin = bins[cur_bin_id];
-            for (particle_t* p: cur_bin) {
-                send_all.push_back(*p);
+            for(int p=0; p<cur_bin.size(); p++){
+                send_all.push_back(*cur_bin[p]);
             }
         }
     }
@@ -641,6 +643,10 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
     if (rank == 0) {
         for (int i = 0; i < num_parts; i++) {
             particle_t &newPart = recv_all[i];
+            if(newPart.id == 21){
+                cout << "   GATHER: new bid: " << get_bin_id(newPart) 
+                     << " id: " << parts[20].id << " old bid: " << get_bin_id(parts[20]) << endl;
+            }
             assignPart(parts, newPart);
         }
     }
