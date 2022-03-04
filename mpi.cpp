@@ -27,7 +27,7 @@ int proc_rows_end; //  right open
 
 row_t upper_row, lower_row;
 row_t recv_upper, recv_lower;
-vector<row_t> recv_all
+vector<row_t> recv_all;
 
 int inline get_row_id_particle(particle_t& particle){
     int y;
@@ -221,6 +221,7 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
     lower_row.resize(num_parts);
     recv_upper.resize(num_parts);
     recv_lower.resize(num_parts);
+    recv_all.resize(num_procs - 1);
     
     // reconstruct bin
     reconstruct_bin(parts, num_parts);
