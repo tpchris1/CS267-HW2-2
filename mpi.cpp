@@ -27,7 +27,9 @@ int proc_rows_end; //  right open
 
 row_t upper_row, lower_row;
 row_t recv_upper, recv_lower;
-vector<row_t> recv_all;
+
+particle_t* recv_all;
+int *dispSizes, *migrateSizes;
 
 int inline get_row_id_particle(particle_t& particle){
     int y;
@@ -221,7 +223,11 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
     lower_row.resize(num_parts);
     recv_upper.resize(num_parts);
     recv_lower.resize(num_parts);
-    recv_all.resize(num_procs - 1);
+
+    recv_all = new particle_t[num_parts];
+
+    migrateSizes = (int*) malloc(num_procs * sizeof(int));
+    dispSizes = (int*) malloc(num_procs * sizeof(int));
     
     // reconstruct bin
     reconstruct_bin(parts, num_parts);
@@ -344,13 +350,13 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
 
 
     }
-    cout << endl << endl;
+    // cout << endl << endl;
     for(int i=0;i<lower_count;i++){
         particle_t &p = lower_row[i];
         int bin_id = get_bin_id(p);
         bins[bin_id].push_back(&p);
     }
-    cout << endl << endl;
+    // cout << endl << endl;
     
     // cout << "DEBUG rank: " << rank << " part:" << 4 << endl;
 
@@ -515,48 +521,83 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
 
 }
 
+
+
+
 void gather_for_save(particle_t* parts, int num_parts, double size, int rank, int num_procs) {
     // Write this function such that at the end of it, the master (rank == 0)
     // processor has an in-order view of all particles. That is, the array
     // parts is complete and sorted by particle id.
-    cout << "Here: " << rank << endl;
-    MPI_Request request[num_procs-1];
-    MPI_Status status[num_procs-1];
-    int recv_all_count[num_procs-1];
-    if (rank == 0){
-        // gather
-        for(int i=0; i<num_procs-1; i++){
-            recv_all[i].resize(num_parts);
-            MPI_Irecv(&recv_all[i], num_parts, PARTICLE, i+1, 0, MPI_COMM_WORLD, &request[i]);
-        }
-        
-        MPI_Waitall(num_procs-1, request, status);
-        
-        for(int i=0; i<num_procs-1; i++){
-            int recvd_from;
-            recvd_from = status[i].MPI_SOURCE;
-            MPI_Get_count(&status[i], PARTICLE, &recv_all_count[i]);
 
-            cout << "all rank: " << i+1 << " cnt: " << recv_all_count[i] << endl;
-            for(int j=0;j<recv_all_count[i];j++){
-                cout << "all rank: " << i+1 << " recvd from: " << recvd_from << " (" << recv_all[i][j].x << ',' << recv_all[i][j].y << ") ";
+    // Push local paricles into send_all
+    row_t send_all;
+    for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
+        int start_bin = get_bin_id_by_row(i);
+        for(int j=0; j<bin_row_count; j++){ // for each bin in current row
+            int cur_bin_id = j + start_bin;
+            bin_t cur_bin = bins[cur_bin_id];
+            for (particle_t* p: cur_bin) {
+                send_all.push_back(*p);
             }
-            cout << endl << endl;
         }
     }
-    else{
-        // send if other procs
-        row_t send_all;
-        for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
-            int start_bin = get_bin_id_by_row(i);
-            for(int j=0; j<bin_row_count; j++){ // for each bin in current row
-                int cur_bin_id = j + start_bin;
-                bin_t cur_bin = bins[cur_bin_id];
-                for(int p=0; p<cur_bin.size(); p++){ // for each particle in current bin
-                    send_all.push_back(*cur_bin[p]);
-                }
-            }
+
+    int send_all_size = send_all.size();
+    MPI_Gather(&send_all_size, 1, MPI_INT, migrateSizes, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    dispSizes[0] = 0;
+    for (int i = 1; i < num_procs; i++) {
+        dispSizes[i] = dispSizes[i-1] + migrateSizes[i-1];
+    }
+
+    MPI_Gatherv(&send_all[0], send_all.size(), PARTICLE, recv_all, migrateSizes, dispSizes, PARTICLE, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        for (int i = 0; i < num_parts; i++) {
+            particle_t &newPart = recv_all[i];
+            assignPart(parts, newPart);
         }
-        MPI_Isend(&send_all[0], send_all.size(), PARTICLE, 0, 0, MPI_COMM_WORLD, &request[rank-1]);
     }
 }
+//     cout << "Here: " << rank << endl;
+//     MPI_Request request[num_procs-1];
+//     MPI_Status status[num_procs-1];
+//     int recv_all_count[num_procs-1];
+//     if (rank == 0){
+//         // gather
+//         for(int i=0; i<num_procs-1; i++){
+//             recv_all[i].resize(num_parts);
+//             MPI_Irecv(&recv_all[i], num_parts, PARTICLE, i+1, 0, MPI_COMM_WORLD, &request[i]);
+//         }
+        
+//         MPI_Waitall(num_procs-1, request, status);
+        
+//         for(int i=0; i<num_procs-1; i++){
+//             int recvd_from;
+//             recvd_from = status[i].MPI_SOURCE;
+//             MPI_Get_count(&status[i], PARTICLE, &recv_all_count[i]);
+
+//             cout << "recvd from: " << recvd_from << " cnt: " << recv_all_count[i] << endl;
+//             for(int j=0;j<recv_all_count[i];j++){
+//                 cout << "all rank: " << 0 << " recvd from: " << recvd_from << " (" << recv_all[i][j].x << ',' << recv_all[i][j].y << ") ";
+//             }
+//             // cout << endl << endl;
+//         }
+//     }
+//     else{
+//         // send if other procs
+//         row_t send_all;
+//         for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
+//             int start_bin = get_bin_id_by_row(i);
+//             for(int j=0; j<bin_row_count; j++){ // for each bin in current row
+//                 int cur_bin_id = j + start_bin;
+//                 bin_t cur_bin = bins[cur_bin_id];
+//                 for(int p=0; p<cur_bin.size(); p++){ // for each particle in current bin
+//                     send_all.push_back(*cur_bin[p]);
+//                 }
+//             }
+//         }
+//         MPI_Isend(&send_all[0], send_all.size(), PARTICLE, 0, 0, MPI_COMM_WORLD, &request[rank-1]);
+//     }
+// }
+
