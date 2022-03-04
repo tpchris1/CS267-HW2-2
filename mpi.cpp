@@ -532,4 +532,44 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
     // Write this function such that at the end of it, the master (rank == 0)
     // processor has an in-order view of all particles. That is, the array
     // parts is complete and sorted by particle id.
+    cout << "Here: " << rank << endl;
+    MPI_Request request[num_procs-1];
+    MPI_Status status[num_procs-1];
+    int recv_all_count[num_procs-1];
+    if (rank == 0){
+        // gather
+        for(int i=0; i<num_procs-1; i++){
+            recv_all[i].resize(num_parts);
+            MPI_Irecv(&recv_all[i], num_parts, PARTICLE, i+1, 0, MPI_COMM_WORLD, &request[i]);
+        }
+        
+        MPI_Waitall(num_procs-1, request, status);
+        
+        for(int i=0; i<num_procs-1; i++){
+            int recvd_from;
+            recvd_from = status[i].MPI_SOURCE;
+            MPI_Get_count(&status[i], PARTICLE, &recv_all_count[i]);
+
+            cout << "all rank: " << rank << " cnt: " << recv_all_count[i] << endl;
+            for(int j=0;j<recv_all_count[i];j++){
+                cout << "all rank: " << rank << " recvd from: " << recvd_from << " (" << recv_all[i][j].x << ',' << recv_all[i][j].y << ") ";
+            }
+            cout << endl << endl;
+        }
+    }
+    else{
+        // send if other procs
+        row_t send_all;
+        for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
+            int start_bin = get_bin_id_by_row(i);
+            for(int j=0; j<bin_row_count; j++){ // for each bin in current row
+                int cur_bin_id = j + start_bin;
+                bin_t cur_bin = bins[cur_bin_id];
+                for(int p=0; p<cur_bin.size(); p++){ // for each particle in current bin
+                    send_all.push_back(*cur_bin[p]);
+                }
+            }
+        }
+        MPI_Isend(&send_all[0], send_all.size(), PARTICLE, 0, 0, MPI_COMM_WORLD, &request[rank-1]);
+    }
 }
