@@ -239,7 +239,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     upper_row.clear();
     lower_row.clear();
 
-    cout << "DEBUG rank: " << rank << " part:" << 1 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 1 << endl;
     if(proc_rows_start == 0){ // if current rank is the first row
         // send my last row
         row_t last = row_to_particle_vec(proc_rows_end - 1);
@@ -279,7 +279,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         // cout << endl;
         MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, &request[0]);
     }
-    cout << "DEBUG rank: " << rank << " part:" << 2 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 2 << endl;
     ////////////////////// RECV
     int upper_count=0, lower_count=0;
     if(proc_rows_start == 0){ // if current rank is the first row
@@ -335,7 +335,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
 
     /***********************END - Send first/last row, Recv upper/lower row *************************/
 
-    cout << "DEBUG rank: " << rank << " part:" << 3 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 3 << endl;
     // put upper row and lower row into bins
     for(int i=0;i<upper_count;i++){
         particle_t &p = upper_row[i];
@@ -352,7 +352,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     }
     cout << endl << endl;
     
-    cout << "DEBUG rank: " << rank << " part:" << 4 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 4 << endl;
 
     // calculate the row of particles
     // handle last row problem
@@ -388,7 +388,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         }
     }
     
-    cout << "DEBUG rank: " << rank << " part:" << 5 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 5 << endl;
 
     // move the row of particles
     for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
@@ -402,7 +402,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         }
     }
     
-    cout << "DEBUG rank: " << rank << " part:" << 6 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 6 << endl;
     row_t send_upper, send_lower;
 
     // reconstruct_bin()
@@ -441,7 +441,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         }
     }
 
-    cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
     // send send_upper and send_lower to corresponding rank
     if(proc_rows_start == 0){ // if current rank is the first row
         // cout << "   send lower rank: " << rank << " cnt: " << send_lower.size() << endl;            
@@ -460,7 +460,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     }
     
     // recv upper and lower from corresponding rank
-    cout << "DEBUG rank: " << rank << " part:" << 8 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 8 << endl;
     int recv_lower_count, recv_upper_count;
     if(proc_rows_start == 0){ // if current rank is the first row
         MPI_Recv(&recv_lower[0], num_parts, PARTICLE, rank+1, 1, MPI_COMM_WORLD, &status[0]);
@@ -511,7 +511,7 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         // }
         // cout << endl << endl;
     }
-    cout << "DEBUG rank: " << rank << " part:" << 9 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 9 << endl;
 
 }
 
@@ -537,9 +537,9 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
             recvd_from = status[i].MPI_SOURCE;
             MPI_Get_count(&status[i], PARTICLE, &recv_all_count[i]);
 
-            cout << "all rank: " << rank << " cnt: " << recv_all_count[i] << endl;
+            cout << "all rank: " << i+1 << " cnt: " << recv_all_count[i] << endl;
             for(int j=0;j<recv_all_count[i];j++){
-                cout << "all rank: " << rank << " recvd from: " << recvd_from << " (" << recv_all[i][j].x << ',' << recv_all[i][j].y << ") ";
+                cout << "all rank: " << i+1 << " recvd from: " << recvd_from << " (" << recv_all[i][j].x << ',' << recv_all[i][j].y << ") ";
             }
             cout << endl << endl;
         }
