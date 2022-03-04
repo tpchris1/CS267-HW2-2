@@ -235,6 +235,50 @@ void init_simulation(particle_t* parts, int num_parts, double size_, int rank, i
     reconstruct_bin(parts, num_parts);
 }
 
+void rebin(particle_t* original_parts, int num_parts, int rank, int num_procs) {
+    vector<particle_t> particlesToSend;
+    for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
+        int start_bin = get_bin_id_by_row(i);
+        for(int j=0; j<bin_row_count; j++){ // for each bin in current row
+            int cur_bin_id = j + start_bin;
+            bin_t &cur_bin = bins[cur_bin_id];
+            for (auto it = cur_bin.begin(); it != cur_bin.end(); it++) {
+                int newBinId = get_bin_id(**it);
+                int newRowId = get_row_id_particle(**it);
+                if (newRowId < proc_rows_start || newRowId >= proc_rows_end) {
+                    particlesToSend.push_back(**it);
+                    cur_bin.erase(it--);
+                } else if (newBinId != cur_bin_id) {
+                    bins[newBinId].push_back(*it);
+                    cur_bin.erase(it--);
+                }
+            }
+        }
+    }
+
+    int particlesToSendSize = particlesToSend.size();
+    MPI_Allgather(&particlesToSendSize, 1, MPI_INT, migrateSizes, 1, MPI_INT, MPI_COMM_WORLD);
+
+    int totalMigrateSize = migrateSizes[0];
+    dispSizes[0] = 0;
+    for (int i = 1; i < num_procs; i++) {
+        dispSizes[i] = dispSizes[i-1] + migrateSizes[i-1];
+        totalMigrateSize += migrateSizes[i];
+    }
+
+    MPI_Allgatherv(&particlesToSend[0], particlesToSend.size(), PARTICLE, recv_all, migrateSizes, dispSizes, PARTICLE, MPI_COMM_WORLD);
+
+    for (int i = 0; i < totalMigrateSize; i++) {
+        int newBinId = get_bin_id(recv_all[i]);
+        int newRowId = get_row_id_particle(recv_all[i]);
+        if (newRowId >= proc_rows_start && newRowId < proc_rows_end) {
+            particle_t &newPart = recv_all[i];
+            bins[newBinId].push_back(&original_parts[newPart.id - 1]);
+            assignPart(original_parts, newPart);
+        }
+    }
+}
+
 
 void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, int num_procs) {
     // Write this function
@@ -262,27 +306,25 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     // cout << "DEBUG rank: " << rank << " part:" << 1 << endl;
     if(proc_rows_start == 0){ // if current rank is the first row
         // send my last row
-        cout << "before row to vec: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
         row_t last = row_to_particle_vec(proc_rows_end - 1);
-        cout << "after row to vec: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
 
         // cout << "   last rank: " << rank << " cnt: " << last.size() << endl;            
-        for(auto iter: last){
-            if(get_row_id_particle(iter) != proc_rows_end - 1){
-                cout << "WRONG!last rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
-            }
-        }
+        // for(auto iter: last){
+        //     if(get_row_id_particle(iter) != proc_rows_end - 1){
+        //         cout << "WRONG!last rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
+        //     }
+        // }
         // cout << endl;
         MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 0, MPI_COMM_WORLD, &request[1]);
     }
     else if(proc_rows_end == bin_row_count){ // if current rank is the last row
         // send my first row
         row_t first = row_to_particle_vec(proc_rows_start);
-        for(auto iter: first){
-            if(get_row_id_particle(iter) != proc_rows_start){
-                cout << "WRONG!first rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
-            }
-        }
+        // for(auto iter: first){
+        //     if(get_row_id_particle(iter) != proc_rows_start){
+        //         cout << "WRONG!first rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
+        //     }
+        // }
         // cout << "first rank: " << rank << " cnt: " << first.size() << endl;            
         // for(auto iter: first){
         //     cout << "first rank: " << rank << " (" << iter.x << ',' << iter.y << ") ";
@@ -293,11 +335,11 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     else{
         // send my last row
         row_t last = row_to_particle_vec(proc_rows_end - 1);
-        for(auto iter: last){
-            if(get_row_id_particle(iter) != proc_rows_end - 1){
-                cout << "WRONG!last rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
-            }
-        }
+        // for(auto iter: last){
+        //     if(get_row_id_particle(iter) != proc_rows_end - 1){
+        //         cout << "WRONG!last rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
+        //     }
+        // }
         // cout << "last rank: " << rank << " cnt: " << last.size() << endl;            
         // for(auto iter: last){
         //     cout << "last rank: " << rank << " (" << iter.x << ',' << iter.y << ") ";
@@ -307,11 +349,11 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
 
         // send my first row
         row_t first = row_to_particle_vec(proc_rows_start);
-        for(auto iter: first){
-            if(get_row_id_particle(iter) != proc_rows_start){
-                cout << "WRONG!first rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
-            }
-        }
+        // for(auto iter: first){
+        //     if(get_row_id_particle(iter) != proc_rows_start){
+        //         cout << "WRONG!first rank: " << rank << " particle id: " << iter.id  << " bid: " << get_bin_id(iter) << " wrong row: " << get_row_id_particle(iter) << endl;
+        //     }
+        // }
         // cout << "first rank: " << rank << " cnt: " << first.size() << endl;            
         // for(auto iter: first){
         //     cout << "first rank: " << rank << " (" << iter.x << ',' << iter.y << ") ";
@@ -330,11 +372,11 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         MPI_Get_count( &status[0], PARTICLE, &lower_count);
 
         // cout << "lower rank: " << rank << " cnt: " << lower_count << endl;
-        for(int i=0;i<lower_count;i++){
-            if (get_row_id_particle(lower_row[i]) != proc_rows_end){
-                cout << "WRONG! lower rank: " << rank << " recvd from: " << recvd_from << " pid: " << lower_row[i].id << " wrong row: " << get_row_id_particle(lower_row[i]);
-            } 
-        }
+        // for(int i=0;i<lower_count;i++){
+        //     if (get_row_id_particle(lower_row[i]) != proc_rows_end){
+        //         cout << "WRONG! lower rank: " << rank << " recvd from: " << recvd_from << " pid: " << lower_row[i].id << " wrong row: " << get_row_id_particle(lower_row[i]);
+        //     } 
+        // }
         // cout << endl << endl;
     }
     else if(proc_rows_end == bin_row_count){ // if current rank is the last row
@@ -345,11 +387,11 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         MPI_Get_count( &status[1], PARTICLE, &upper_count);
 
         // cout << "upper rank: " << rank << " cnt: " << upper_count << endl;
-        for(int i=0;i<upper_count;i++){
-            if (get_row_id_particle(upper_row[i]) != proc_rows_start - 1){
-                cout << "WRONG! upper rank: " << rank << " recvd from: " << recvd_from << " pid: " << upper_row[i].id << " wrong row: " << get_row_id_particle(upper_row[i]);
-            }
-        }
+        // for(int i=0;i<upper_count;i++){
+        //     if (get_row_id_particle(upper_row[i]) != proc_rows_start - 1){
+        //         cout << "WRONG! upper rank: " << rank << " recvd from: " << recvd_from << " pid: " << upper_row[i].id << " wrong row: " << get_row_id_particle(upper_row[i]);
+        //     }
+        // }
         // cout << endl << endl;
     }
     else{ // middle ranks
@@ -365,11 +407,11 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         // }
         // cout << endl << endl;
         // cout << "lower rank: " << rank << " cnt: " << lower_count << endl;
-        for(int i=0;i<lower_count;i++){
-            if (get_row_id_particle(lower_row[i]) != proc_rows_end){
-                cout << "WRONG! lower rank: " << rank << " recvd from: " << recvd_from << " pid: " << lower_row[i].id << " wrong row: " << get_row_id_particle(lower_row[i]);
-            } 
-        }
+        // for(int i=0;i<lower_count;i++){
+        //     if (get_row_id_particle(lower_row[i]) != proc_rows_end){
+        //         cout << "WRONG! lower rank: " << rank << " recvd from: " << recvd_from << " pid: " << lower_row[i].id << " wrong row: " << get_row_id_particle(lower_row[i]);
+        //     } 
+        // }
         // cout << endl << endl;
 
         // recv last row from upper rank 
@@ -383,11 +425,11 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         // }
         // cout << endl << endl;
         // cout << "upper rank: " << rank << " cnt: " << upper_count << endl;
-        for(int i=0;i<upper_count;i++){
-            if (get_row_id_particle(upper_row[i]) != proc_rows_start - 1){
-                cout << "WRONG! upper rank: " << rank << " recvd from: " << recvd_from << " pid: " << upper_row[i].id << " wrong row: " << get_row_id_particle(upper_row[i]);
-            }
-        }
+        // for(int i=0;i<upper_count;i++){
+        //     if (get_row_id_particle(upper_row[i]) != proc_rows_start - 1){
+        //         cout << "WRONG! upper rank: " << rank << " recvd from: " << recvd_from << " pid: " << upper_row[i].id << " wrong row: " << get_row_id_particle(upper_row[i]);
+        //     }
+        // }
         // cout << endl << endl;
     }
 
@@ -462,151 +504,8 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
             }
         }
     }
-    
-    // cout << "DEBUG rank: " << rank << " part:" << 6 << endl;
-    row_t send_upper, send_lower;
 
-    // reconstruct_bin()
-    for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
-        int start_bin = get_bin_id_by_row(i);
-        for(int j=0; j<bin_row_count; j++){ // for each bin in current row
-            int cur_bin_id = j + start_bin;
-            bin_t& cur_bin = bins[cur_bin_id];
-            for(auto it = cur_bin.begin(); it!=cur_bin.end(); it++){ // for each particle in current bin
-                int new_bin_id = get_bin_id(**it);
-                int new_row_id = get_row_id_particle(**it);
-                if((*it)->id == 21){
-                    // cout << "!!!!!! rank " << rank << " row: " << i << " cbid: " << cur_bin_id << " nbid: " << new_bin_id << " rid: " << new_row_id << endl;
-                }
-
-                // if particle move within cur_bin -> do nothing
-                // if particle move outside of cur_bin
-                if (new_bin_id != cur_bin_id){
-                    // if new_bin_id belongs to current proc
-                    if (new_row_id >= proc_rows_start && new_row_id < proc_rows_end){
-                        // push to new bin
-                        bins[new_bin_id].push_back(*it);
-                        if((*it)->id == 21){
-                            // cout << "in new bin? rank " << rank << " row: " << i << " cbid: " << cur_bin_id << " nbid: " << new_bin_id << " rid: " << new_row_id << endl;
-                        }
-                    }
-                    // if new_bin_id does not belong to current proc
-                    else{
-                        // send to upper 1 row -> since each particle will not move more than one row 
-                        if (new_row_id == proc_rows_start - 1){
-                            send_upper.push_back(**it);
-                        }
-                        // send to lower 1 row -> since each particle will not move more than one row 
-                        if (new_row_id == proc_rows_end){
-                            send_lower.push_back(**it);
-                        }                           
-                    }
-                    // remove from old bin
-                    cur_bin.erase(it--);
-                }
-            }
-        }
-    }
-
-    if(rank == 0){
-        cout << "after recon bin: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
-    }
-
-    // cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
-    // send send_upper and send_lower to corresponding rank
-    if(proc_rows_start == 0){ // if current rank is the first row
-        for(int i=0;i<send_lower.size();i++){
-            if (get_row_id_particle(send_lower[i]) != proc_rows_end){
-                cout << "WRONG! send lower rank: " << rank << " pid: " << send_lower[i].id << " wrong row: " << get_row_id_particle(send_lower[i]);
-            } 
-        }
-        MPI_Isend(&send_lower[0], send_lower.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &request[0]);
-    }
-    else if(proc_rows_end == bin_row_count){ // if current rank is the last row
-        for(int i=0;i<send_upper.size();i++){
-            if (get_row_id_particle(send_upper[i]) != proc_rows_start - 1){
-                cout << "WRONG! send upper rank: " << rank << " pid: " << send_upper[i].id << " wrong row: " << get_row_id_particle(send_upper[i]);
-            } 
-        }
-        MPI_Isend(&send_upper[0], send_upper.size(), PARTICLE, rank-1, 1, MPI_COMM_WORLD, &request[1]);
-    }
-    else{
-        for(int i=0;i<send_lower.size();i++){
-            if (get_row_id_particle(send_lower[i]) != proc_rows_end){
-                cout << "WRONG! send lower rank: " << rank << " pid: " << send_lower[i].id << " wrong row: " << get_row_id_particle(send_lower[i]);
-            } 
-        }
-        MPI_Isend(&send_lower[0], send_lower.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, &request[0]);
-        for(int i=0;i<send_upper.size();i++){
-            if (get_row_id_particle(send_upper[i]) != proc_rows_start - 1){
-                cout << "WRONG! send upper rank: " << rank << " pid: " << send_upper[i].id << " wrong row: " << get_row_id_particle(send_upper[i]);
-            } 
-        }
-        MPI_Isend(&send_upper[0], send_upper.size(), PARTICLE, rank-1, 1, MPI_COMM_WORLD, &request[1]);
-    }
-
-    if(rank == 0){
-        // cout << "after send: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
-    }
-    
-    // recv upper and lower from corresponding rank
-    // cout << "DEBUG rank: " << rank << " part:" << 8 << endl;
-    int recv_lower_count, recv_upper_count;
-    if(proc_rows_start == 0){ // if current rank is the first row
-        MPI_Recv(&recv_lower[0], num_parts, PARTICLE, rank+1, 1, MPI_COMM_WORLD, &status[0]);
-        MPI_Get_count(&status[0], PARTICLE, &recv_lower_count);
-        reconstruct_row_to_bin(recv_lower, recv_lower_count, parts);
-        
-        // cout << "recv lower rank: " << rank << " cnt: " << recv_lower_count << endl;            
-        // for(int i=0;i<recv_lower_count;i++){
-        //     cout << "recv lower rank: " << rank << " recvd from: " << rank+1 << " (" << recv_lower[i].x << ',' << recv_lower[i].y << ") ";
-        // }
-        // cout << endl << endl;
-    }
-    else if(proc_rows_end == bin_row_count){ // if current rank is the last row
-        MPI_Recv(&recv_upper[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status[1]);
-        MPI_Get_count(&status[1], PARTICLE, &recv_upper_count);
-        reconstruct_row_to_bin(recv_upper, recv_upper_count, parts);
-        
-        // cout << "recv upper rank: " << rank << " cnt: " << recv_upper_count << endl;            
-        // for(int i=0;i<recv_upper_count;i++){
-        //     cout << "recv upper rank: " << rank << " recvd from: " << rank-1 << " (" << recv_upper[i].x << ',' << recv_upper[i].y << ") ";
-        // }
-        // cout << endl << endl;
-    }
-    else{
-        int recvd_from;
-
-        MPI_Recv(&recv_lower[0], num_parts, PARTICLE, rank+1, 1, MPI_COMM_WORLD, &status[0]);
-        recvd_from = status[0].MPI_SOURCE;
-        MPI_Get_count(&status[0], PARTICLE, &recv_lower_count);
-
-        reconstruct_row_to_bin(recv_lower, recv_lower_count, parts);
-        
-        // cout << "recv lower rank: " << rank << " cnt: " << recv_lower_count << endl;            
-        // for(int i=0;i<recv_lower_count;i++){
-        //     cout << "recv lower rank: " << rank << " recvd from: " << recvd_from << " (" << recv_lower[i].x << ',' << recv_lower[i].y << ") ";
-        // }
-        // cout << endl << endl;
-
-        MPI_Recv(&recv_upper[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status[1]);
-        recvd_from = status[1].MPI_SOURCE;
-        MPI_Get_count(&status[1], PARTICLE, &recv_upper_count);
-        
-        reconstruct_row_to_bin(recv_upper, recv_upper_count, parts);
-
-        // cout << "recv upper rank: " << rank << " cnt: " << recv_upper_count << endl;            
-        // for(int i=0;i<recv_upper_count;i++){
-        //     cout << "recv upper rank: " << rank << " recvd from: " << recvd_from << " (" << recv_upper[i].x << ',' << recv_upper[i].y << ") ";
-        // }
-        // cout << endl << endl;
-    }
-
-    if(rank == 0){
-        // cout << "after recv: " << rank << " particle id: " << parts[20].id  << " bid: " << get_bin_id(parts[20]) << " wrong row: " << get_row_id_particle(parts[20]) << endl;
-    }
-    // cout << "DEBUG rank: " << rank << " part:" << 9 << endl;
-
+    rebin(parts, num_parts, rank, num_procs);
 }
 
 
@@ -644,8 +543,8 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
         for (int i = 0; i < num_parts; i++) {
             particle_t &newPart = recv_all[i];
             if(newPart.id == 21){
-                cout << "   GATHER: new bid: " << get_bin_id(newPart) 
-                     << " id: " << parts[20].id << " old bid: " << get_bin_id(parts[20]) << endl;
+                // cout << "   from: " << i <<" row GATHER: new bid: " << get_bin_id(newPart) 
+                //      << " id: " << parts[20].id << " old bid: " << get_bin_id(parts[20]) << endl;
             }
             assignPart(parts, newPart);
         }
