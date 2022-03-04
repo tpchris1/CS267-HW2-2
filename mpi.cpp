@@ -27,6 +27,7 @@ int proc_rows_end; //  right open
 
 row_t upper_row, lower_row;
 row_t recv_upper, recv_lower;
+vector<row_t> recv_all
 
 int inline get_row_id_particle(particle_t& particle){
     int y;
