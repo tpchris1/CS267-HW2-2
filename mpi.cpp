@@ -16,20 +16,27 @@ bin_t* bins;
 int bin_row_count;
 int bin_count;
 double bin_size;
+int total_procs_needed;
+int remain_procs_count; // procs can not be divided completely by total_procs_needed
+
 
 // for each process
 int rows_per_proc;
 int proc_bin_count;
 
 // e.g if proc 0 has row 0 and row 1 then (proc_rows_start, proc_rows_end) = (0,2)
-int proc_rows_start; // left close
-int proc_rows_end; //  right open 
+int proc_rows_start=0; // left close
+int proc_rows_end=0; //  right open 
 
 row_t upper_row, lower_row;
 row_t recv_upper, recv_lower;
+row_t first;
+row_t last;
 
-particle_t* recv_all;
-int *dispSizes, *migrateSizes;
+// int* migrateSizes;
+// int* dispSizes;
+
+
 
 int inline get_row_id_particle(particle_t& particle){
     int y;
@@ -59,11 +66,6 @@ int inline get_bin_id(particle_t& particle) {
 }
 
 void reconstruct_bin(particle_t* parts, int num_parts) {
-    
-    for (int i = 0; i < bin_count; i++) {
-        bins[i].clear();
-    }
-
     for (int i = 0; i < num_parts; i++) {
         parts[i].ax = 0;
     	parts[i].ay = 0;
@@ -190,50 +192,54 @@ void init_simulation(particle_t* parts, int num_parts, double size, int rank, in
     bin_row_count = size / cutoff;
     bin_count = bin_row_count * bin_row_count;
     bin_size = size / bin_row_count;
-    
-    // for each process
-    rows_per_proc = bin_row_count / num_procs; 
-    
-    // with remainder
-    int remainder = bin_row_count % num_procs; 
-    if (remainder != 0 && rank < remainder){
-        rows_per_proc += 1;
-    }   
 
     // All proc have a copy of all bins, but only access it's own portion of that
     bins = new bin_t[bin_count];
 
+    // Handle procs number for different size of bin_row_count(according to num_parts)
+    if(num_procs < bin_row_count) total_procs_needed = num_procs;
+    else total_procs_needed = bin_row_count;
+
+    if(rank == 0){
+        cout << "num_procs" << num_procs << endl;
+        cout << "total_procs_needed: " << total_procs_needed << endl; 
+    }
+
+    if(rank < total_procs_needed) { // if out of needed return
+        rows_per_proc = bin_row_count / total_procs_needed;
+        
+        remain_procs_count = bin_row_count % total_procs_needed; 
+        if (remain_procs_count != 0 && rank < remain_procs_count){
+            rows_per_proc += 1;
+        }   
+
+        if (remain_procs_count != 0 && rank < remain_procs_count){
+            proc_rows_start = rank * rows_per_proc;
+            proc_rows_end = proc_rows_start + rows_per_proc;
+        }
+        else{
+            int rows_before_me = remain_procs_count * (rows_per_proc + 1);
+            proc_rows_start = rows_before_me + (rank-remain_procs_count) * rows_per_proc;
+            proc_rows_end = proc_rows_start + rows_per_proc;
+        }   
+
+        upper_row.resize(num_parts);
+        lower_row.resize(num_parts);
+        recv_upper.resize(num_parts);
+        recv_lower.resize(num_parts);    
+    
+        // reconstruct bin
+        reconstruct_bin(parts, num_parts);
+    }
+    cout << "rank: " << rank << endl 
+         << "rows_per_proc: " << rows_per_proc << endl
+         << "proc_rows_start: " << proc_rows_start << endl
+         << "proc_rows_end: " << proc_rows_end << endl;
+    
     // TODO: optimize to process based bin (each proc only have its own copy of bins)
     // proc_bin_count = rows_per_proc * bin_row_count;
     // bins = new bin_t[proc_bin_count];
     
-    if (remainder != 0 && rank < remainder){
-        proc_rows_start = rank * rows_per_proc;
-        proc_rows_end = proc_rows_start + rows_per_proc;
-    }
-    else{
-        int rows_before_me = remainder * (rows_per_proc + 1);
-        proc_rows_start = rows_before_me + (rank-remainder) * rows_per_proc;
-        proc_rows_end = proc_rows_start + rows_per_proc;
-    }   
-
-    // cout << "rank: " << rank << endl 
-    //      << "rows_per_proc: " << rows_per_proc << endl
-    //      << "proc_rows_start: " << proc_rows_start << endl
-    //      << "proc_rows_end: " << proc_rows_end << endl;
-
-    upper_row.resize(num_parts);
-    lower_row.resize(num_parts);
-    recv_upper.resize(num_parts);
-    recv_lower.resize(num_parts);
-
-    recv_all = new particle_t[num_parts];
-
-    migrateSizes = (int*) malloc(num_procs * sizeof(int));
-    dispSizes = (int*) malloc(num_procs * sizeof(int));
-    
-    // reconstruct bin
-    reconstruct_bin(parts, num_parts);
 }
 
 
@@ -241,9 +247,8 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     // Write this function
     /***********************BEGIN - Send first/last row, Recv upper/lower row *************************/
     ////////////////////// SEND
-    
-
-    // 
+    if(rank >= total_procs_needed) return; // dont use current rank
+    num_procs = total_procs_needed;
     if(rank-1 >= 0){ // 
         // clean up procs last row
         int start_bin_id = get_bin_id_by_row(proc_rows_start - 1); 
@@ -264,97 +269,58 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         // send my first row
         row_t first = row_to_particle_vec(proc_rows_start);
         MPI_Isend(&first[0], first.size(), PARTICLE, rank-1, 0, MPI_COMM_WORLD, request);
-        row_t().swap(first);
     }
     if(rank < num_procs-1){
         // send my last row
         row_t last = row_to_particle_vec(proc_rows_end - 1);
         MPI_Isend(&last[0], last.size(), PARTICLE, rank+1, 0, MPI_COMM_WORLD, request);
-        row_t().swap(last);
     }
+    delete request;
+    first.clear();
+    last.clear();
 
-
-    // cout << "DEBUG rank: " << rank << " part:" << 1 << endl;
-    // cout << "DEBUG rank: " << rank << " part:" << 2 << endl;
     ////////////////////// RECV
+
+
     int upper_count=0, lower_count=0;
     MPI_Request status[2];
     if(rank-1 >= 0){ // 
         MPI_Status status;
         // recv last row from upper rank 
-        // upper_row.resize(num_parts);
+        upper_row.resize(num_parts);
         MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 0, MPI_COMM_WORLD, &status);
         MPI_Get_count( &status, PARTICLE, &upper_count);
-        // upper_row.resize(upper_count);
-        // cout << "SIZE rank: " << rank << " upper:" << upper_row.size() << endl;
+        upper_row.resize(upper_count);
         for(int i=0;i<upper_count;i++){
             particle_t &p = upper_row[i];
             int bin_id = get_bin_id(p);
             bins[bin_id].push_back(&p);
         }
+        
     }
     if(rank < num_procs-1){
         MPI_Status status;
         // recv first row from lower rank
-        // lower_row.resize(num_parts);
+        lower_row.resize(num_parts);
         MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status);
         MPI_Get_count( &status, PARTICLE, &lower_count);
-        // lower_row.resize(lower_count);
-        // cout << "SIZE rank: " << rank << " lower:" << lower_row.size() << endl;
+        lower_row.resize(lower_count);
         for(int i=0;i<lower_count;i++){
             particle_t &p = lower_row[i];
             int bin_id = get_bin_id(p);
             bins[bin_id].push_back(&p);
         }
-    }
-    
-    // if(proc_rows_start == 0){ // if current rank is the first row
-    //     // recv first row from rank 1
-    //     int recvd_from;
-    //     MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status[0]);
-    //     recvd_from = status[0].MPI_SOURCE;
-    //     MPI_Get_count( &status[0], PARTICLE, &lower_count);
-    // }
-    // else if(proc_rows_end == bin_row_count){ // if current rank is the last row
-    //     // recv last row from 2nd last rank 
-    //     int recvd_from;
-    //     MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 0, MPI_COMM_WORLD, &status[1]);
-    //     recvd_from = status[1].MPI_SOURCE;
-    //     MPI_Get_count( &status[1], PARTICLE, &upper_count);
-    // }
-    // else{ // middle ranks
-    //     // recv first row from lower rank
-    //     int recvd_from;
-    //     MPI_Recv(&lower_row[0], num_parts, PARTICLE, rank+1, 0, MPI_COMM_WORLD, &status[0]);
-    //     recvd_from = status[0].MPI_SOURCE;
-    //     MPI_Get_count( &status[0], PARTICLE, &lower_count);
+        
+    }   
 
-    //     // recv last row from upper rank 
-    //     MPI_Recv(&upper_row[0], num_parts, PARTICLE, rank-1, 0, MPI_COMM_WORLD, &status[1]);
-    //     recvd_from = status[1].MPI_SOURCE;
-    //     MPI_Get_count( &status[1], PARTICLE, &upper_count);
-    // }
+    // upper_row.clear();
+    // lower_row.clear();
 
     /***********************END - Send first/last row, Recv upper/lower row *************************/
 
     // cout << "DEBUG rank: " << rank << " part:" << 3 << endl;
-    // put upper row and lower row into bins
-    // for(int i=0;i<upper_count;i++){
-    //     particle_t &p = upper_row[i];
-    //     int bin_id = get_bin_id(p);
-    //     bins[bin_id].push_back(&p);
-    // }
-    // cout << "SIZE rank: " << rank << " upper:" << upper_row.size() << endl;
-    // cout << endl << endl;
-    // for(int i=0;i<lower_count;i++){
-    //     particle_t &p = lower_row[i];
-    //     int bin_id = get_bin_id(p);
-    //     bins[bin_id].push_back(&p);
-    // }
-    // cout << "SIZE rank: " << rank << " lower:" << lower_row.size() << endl;
-    // cout << endl << endl;
-    
-    // cout << "DEBUG rank: " << rank << " part:" << 2 << endl;
+    // put upper row and lower row into bins    
+    // cout << "DEBUG rank: " << rank << " part:" << 4 << endl;
 
     // calculate the row of particles
     // handle last row problem
@@ -362,7 +328,6 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     // if last row -> need to take care of last row
     if(rank == num_procs -1) actual_rows_end = proc_rows_end - 1; 
     else actual_rows_end = proc_rows_end;
-    
     for(int i=proc_rows_start; i<=actual_rows_end;i++){ // for each row in current proc
         int start_bin = get_bin_id_by_row(i);
         for(int j=0; j<bin_row_count; j++){ // for each bin in current row
@@ -393,6 +358,8 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
     
     // cout << "DEBUG rank: " << rank << " part:" << 5 << endl;
 
+
+
     // move the row of particles
     for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
         int start_bin = get_bin_id_by_row(i);
@@ -405,10 +372,10 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         }
     }
     
-    cout << "DEBUG rank: " << rank << " part:" << 6 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 6 << endl;
     row_t send_upper, send_lower;
+    MPI_Barrier(MPI_COMM_WORLD);
 
-    // reconstruct_bin()
     for(int i=proc_rows_start; i<proc_rows_end;i++){ // for each row in current rank
         int start_bin = get_bin_id_by_row(i);
         for(int j=0; j<bin_row_count; j++){ // for each bin in current row
@@ -443,10 +410,8 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
             }
         }
     }
-
-
     // MPI_Status status2[2];
-    cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
+    // cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
     // send send_upper and send_lower to corresponding rank
 
     MPI_Request* request1 = new MPI_Request();
@@ -459,27 +424,30 @@ void simulate_one_step(particle_t* parts, int num_parts, double size, int rank, 
         MPI_Isend(&send_lower[0], send_lower.size(), PARTICLE, rank+1, 1, MPI_COMM_WORLD, request1);
     }
 
+    delete request1;
+    send_upper.clear();
+    send_lower.clear();
+
+
     int recv_lower_count, recv_upper_count;
     MPI_Request status1[2];
     if(rank-1 >= 0){ // 
         MPI_Status status1;
         // recv last row from upper rank 
-        recv_upper.resize(num_parts);
         MPI_Recv(&recv_upper[0], num_parts, PARTICLE, rank-1, 1, MPI_COMM_WORLD, &status1);
         MPI_Get_count(&status1, PARTICLE, &recv_upper_count);
-        recv_upper.resize(recv_upper_count);
         reconstruct_row_to_bin(recv_upper, recv_upper_count, parts);
     }
     if(rank < num_procs-1){
         MPI_Status status1;
         // recv first row from lower rank
-        recv_lower.resize(num_parts);
         MPI_Recv(&recv_lower[0], num_parts, PARTICLE, rank+1, 1, MPI_COMM_WORLD, &status1);
         MPI_Get_count(&status1, PARTICLE, &recv_lower_count);
-        recv_lower.resize(recv_lower_count);
         reconstruct_row_to_bin(recv_lower, recv_lower_count, parts);
+        
     }
-    cout << "DEBUG rank: " << rank << " part:" << 7 << endl;
+
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 
@@ -489,6 +457,9 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
     // Write this function such that at the end of it, the master (rank == 0)
     // processor has an in-order view of all particles. That is, the array
     // parts is complete and sorted by particle id.
+    num_procs = total_procs_needed;
+    int* migrateSizes = new int[num_procs];
+    int* dispSizes = new int[num_procs];
 
     // Push local paricles into send_all
     row_t send_all;
@@ -502,6 +473,7 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
             }
         }
     }
+    particle_t* recv_all = new particle_t[num_parts];;
 
     int send_all_size = send_all.size();
     MPI_Gather(&send_all_size, 1, MPI_INT, migrateSizes, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -516,11 +488,10 @@ void gather_for_save(particle_t* parts, int num_parts, double size, int rank, in
     if (rank == 0) {
         for (int i = 0; i < num_parts; i++) {
             particle_t &newPart = recv_all[i];
-            // if(newPart.id == 21){
-            //     cout << "   GATHER: new bid: " << get_bin_id(newPart) 
-            //          << " id: " << parts[20].id << " old bid: " << get_bin_id(parts[20]) << endl;
-            // }
             assignPart(parts, newPart);
         }
     }
+    delete[] recv_all;
+    delete[] migrateSizes;
+    delete[] dispSizes;
 }
